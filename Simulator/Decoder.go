@@ -1102,6 +1102,9 @@ func Decode(fileData []byte) (string, error) {
 		//STD
 		case 0b11111101:
 			builder.WriteString(directMappedInstructions[fileData[position]])
+			if fileData[position] == 0b11110000 {
+				continue
+			}
 
 		default:
 			return "", &DecodeError{Message: "invalid instruction", Pos: position}
