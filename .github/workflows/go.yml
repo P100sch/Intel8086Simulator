@@ -20,7 +20,6 @@ jobs:
       uses: ilammy/setup-nasm@v1.5.1
       with:
         version: 2.16.03
-        platform: linux
 
     - name: Set up Go
       uses: actions/setup-go@v4
