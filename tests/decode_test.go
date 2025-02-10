@@ -25,7 +25,11 @@ func TestDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { t.Log(os.RemoveAll(dir)) }()
+	defer func() {
+		if err = os.RemoveAll(dir); err != nil {
+			t.Log(err)
+		}
+	}()
 
 	var listing []fs.DirEntry
 	listing, err = testFiles.ReadDir("data")
