@@ -19,8 +19,7 @@ func (e *DisassembleError) Error() string {
 }
 
 func newInvalidParameterError(position int, cause string) *DisassembleError {
-  err := DisassembleError{Message: "invalid parameters (" + cause + ")", Pos: position}
-  return &err
+  return &DisassembleError{Message: "invalid parameters (" + cause + ")", Pos: position}
 }
 
 func newInvalidParameterErrorPrematureEndOfStream(position int) *DisassembleError {
@@ -1114,5 +1113,5 @@ func Disassemble(data []byte) (string, error) {
     segmentOverride = ""
   }
 
-  return builder.String(), nil
+  return strings.TrimSuffix(builder.String(), "\n"), nil
 }
