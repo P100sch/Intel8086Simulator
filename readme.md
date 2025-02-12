@@ -7,8 +7,8 @@ Simple 8086 simulator for Casey Muratori's Performance Programming course.
 
 `Intel8086Simulator [-v|d] instructions.bin [-o out.asm]`
 Simulates the execution of the instruction stream.
-`-v` Outputs disassembly and the state of the registers after each instruction.
-`-d` Only outputs a disassembly of the instruction stream to the console or to the file specified by the `-o` flag.
+  - `-v` Outputs disassembly and the state of the registers after each instruction.
+  - `-d` Only outputs a disassembly of the instruction stream to the console or to the file specified by the `-o` flag.
 
 ## Testing
 
