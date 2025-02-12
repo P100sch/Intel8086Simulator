@@ -2,7 +2,6 @@ package tests
 
 import (
   "bytes"
-  "embed"
   "fmt"
   "io/fs"
   "math"
@@ -17,9 +16,6 @@ import (
   "github.com/P100sch/Intel8086Simulator/Simulation/Disassembly"
 )
 
-//go:embed data/*
-var testFiles embed.FS
-
 func TestDecode(t *testing.T) {
   dir, err := os.MkdirTemp("", "Intel8086SimulatorDecodingTest")
   if err != nil {
@@ -32,13 +28,13 @@ func TestDecode(t *testing.T) {
   }()
 
   var listing []fs.DirEntry
-  listing, err = testFiles.ReadDir("data")
+  listing, err = testFiles.ReadDir("data/decoding")
   if err != nil {
     t.Fatal(err)
   }
   for _, fileInfo := range listing {
     var data []byte
-    data, err = testFiles.ReadFile(path.Join("data", fileInfo.Name()))
+    data, err = testFiles.ReadFile(path.Join("data/decoding", fileInfo.Name()))
     if err != nil {
       t.Fatal(err)
     }
@@ -96,7 +92,7 @@ func TestDecode(t *testing.T) {
         print("\n")
       }
       for i := len(data); i < outputLen; i++ {
-        fmt.Printf("%03d: ", i)
+        fmt.Printf("%"+strconv.FormatFloat(digits, 'f', 0, 64)+"d: ", i)
         print("        |")
         print(formatByte(outputData[i]))
         print("<---\n")

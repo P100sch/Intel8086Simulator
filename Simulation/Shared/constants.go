@@ -19,4 +19,5 @@ const (
   RegisterMode = 0b11000000
 )
 
-const _WIDE = 0b00001000
+// WIDE is the expected value for wide decoding
+const WIDE = 0b00001000

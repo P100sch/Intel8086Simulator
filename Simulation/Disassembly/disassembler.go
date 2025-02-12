@@ -73,7 +73,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b10001011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       immediate := data[position]&0b01000000 != 0
       position++
       if position == dataLength {
@@ -195,7 +195,7 @@ func Disassemble(data []byte) (string, error) {
       if data[position]&Shared.RegMask != 0b00000000 {
         return "", newInvalidParameterErrorInvalidInstruction(position)
       }
-      assembly, err = disassembleStandardParameters("POP ", segmentOverride, true, false, false, false, false, _WIDE, data, &position)
+      assembly, err = disassembleStandardParameters("POP ", segmentOverride, true, false, false, false, false, Shared.WIDE, data, &position)
       if err != nil {
         return "", err
       }
@@ -239,7 +239,7 @@ func Disassemble(data []byte) (string, error) {
     case 0b10000110:
       fallthrough
     case 0b10000111:
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -336,7 +336,7 @@ func Disassemble(data []byte) (string, error) {
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
       }
-      assembly, err = disassembleStandardParameters(name, segmentOverride, false, false, false, false, false, _WIDE, data, &position)
+      assembly, err = disassembleStandardParameters(name, segmentOverride, false, false, false, false, false, Shared.WIDE, data, &position)
       if err != nil {
         return "", err
       }
@@ -352,7 +352,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b10000011:
       signExtend := data[position]&Shared.DirectionMask != 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -388,7 +388,7 @@ func Disassemble(data []byte) (string, error) {
         name = "ADC "
       }
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -439,7 +439,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b00101011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       var name string
       if data[position]&0b00010000 == 0 {
         name = "SUB "
@@ -522,7 +522,7 @@ func Disassemble(data []byte) (string, error) {
     case 0b11110110:
       fallthrough
     case 0b11110111:
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -548,7 +548,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b00111011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -599,7 +599,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b11010011:
       countInCL := data[position]&Shared.DirectionMask != 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -629,7 +629,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b00100011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -661,7 +661,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b00001011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -693,7 +693,7 @@ func Disassemble(data []byte) (string, error) {
       fallthrough
     case 0b00110011:
       sourceInReg := data[position]&Shared.DirectionMask == 0
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -720,7 +720,7 @@ func Disassemble(data []byte) (string, error) {
     case 0b10000100:
       fallthrough
     case 0b10000101:
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -847,7 +847,7 @@ func Disassemble(data []byte) (string, error) {
     case 0b11111110:
       fallthrough
     case 0b11111111:
-      wide := getAndShiftWide(data[position])
+      wide := Shared.IsolateAndShiftWide(data[position])
       position++
       if position == dataLength {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
@@ -1006,7 +1006,7 @@ func Disassemble(data []byte) (string, error) {
         return "", newInvalidParameterErrorPrematureEndOfStream(position)
       }
       var second string
-      second, err = disassembleRegisterOrMemory(segmentOverride, _WIDE, data, &position)
+      second, err = disassembleRegisterOrMemory(segmentOverride, Shared.WIDE, data, &position)
       builder.WriteString("ESC ")
       builder.WriteString(strconv.FormatUint(uint64(opcode|data[position]&Shared.RegMask>>3), 10))
       builder.WriteString(", ")

@@ -1,7 +1,5 @@
 package Disassembly
 
-const _WIDE = 0b00001000
-
 var registers = [16]string{
   "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH",
   "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI",

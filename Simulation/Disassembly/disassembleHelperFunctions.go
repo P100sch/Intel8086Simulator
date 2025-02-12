@@ -27,6 +27,7 @@ func disassembleStandardParameters(name, segmentOverride string, noFirst, source
   var mod = data[*position] & Shared.ModMask
   if !noFirst && !immediate {
     if segmentRegister {
+      wide = Shared.WIDE
       var valid bool
       first, valid = disassembleSegmentRegister(data[*position])
       if !valid {
@@ -137,11 +138,6 @@ func disassembleSegmentRegister(parameters byte) (string, bool) {
     return "", false
   }
   return segmentRegisters[parameters&Shared.SegMask>>3], true
-}
-
-// getAndShiftWide gets the wide bit from the instruction and shifts it up 3 bits for usage in decoding
-func getAndShiftWide(instruction byte) byte {
-  return instruction & Shared.WideMask << 3
 }
 
 // order concatenates first and second. Source is put last
