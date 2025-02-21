@@ -52,6 +52,8 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 	var sourceValue uint16
 
 	for position := 0; position < dataLength; position++ {
+		var ipModified = false
+
 		switch fileData[position] {
 
 		//Standard MOV permutations
@@ -351,13 +353,127 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 			}
 			_ = sub(AX, sourceValue, wide)
 
+		//JMP
+		case 0b11101001:
+			position += 2
+			if position >= dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			IP = calculateJump(uint16(fileData[position-1])+uint16(fileData[position])<<8, position)
+			ipModified = true
+		case 0b11101010:
+			position += 4
+			if position >= dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			IP = uint16(fileData[position-3]) + uint16(fileData[position-2])<<8
+			CS = uint16(fileData[position-1]) + uint16(fileData[position-2])<<8
+			ipModified = true
+		//JMP byte
+		case 0b11101011:
+			position++
+			if position == dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			IP = calculateJumpB(fileData[position], position)
+			ipModified = true
+		//Conditional jumps
+		case 0b01110100:
+			fallthrough
+		case 0b01111100:
+			fallthrough
+		case 0b01111110:
+			fallthrough
+		case 0b01110010:
+			fallthrough
+		case 0b01110110:
+			fallthrough
+		case 0b01111010:
+			fallthrough
+		case 0b01110000:
+			fallthrough
+		case 0b01111000:
+			fallthrough
+		case 0b01110101:
+			fallthrough
+		case 0b01111101:
+			fallthrough
+		case 0b01111111:
+			fallthrough
+		case 0b01110011:
+			fallthrough
+		case 0b01110111:
+			fallthrough
+		case 0b01111011:
+			fallthrough
+		case 0b01110001:
+			fallthrough
+		case 0b01111001:
+			var conditions = [...]uint16{
+				0b0100: uint16(ZF),                   //JZ
+				0b1100: uint16(SF ^ OF),              //JL
+				0b1110: uint16(SF ^ OF | ZF&^OF),     //JLE
+				0b0010: uint16(CF),                   //JB
+				0b0110: uint16(CF | ZF),              //JBE
+				0b1010: uint16(PF),                   //JP
+				0b0000: uint16(OF),                   //JO
+				0b1000: uint16(SF),                   //JS
+				0b0101: uint16(ZF ^ 1),               //JNZ
+				0b1101: uint16(SF ^ OF ^ 1 | ZF&^OF), //JGE
+				0b1111: uint16(SF ^ OF ^ 1),          //JG
+				0b0011: uint16(CF ^ 1 | ZF),          //JAE
+				0b0111: uint16(CF ^ 1),               //JA
+				0b1011: uint16(PF ^ 1),               //JNP
+				0b0001: uint16(OF ^ 1),               //JNO
+				0b1001: uint16(SF ^ 1),               //JNS
+			}
+			condition := conditions[fileData[position]&0b00001111]
+			position++
+			if position == dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			if condition != 0 {
+				IP = calculateJumpB(fileData[position], position)
+				ipModified = true
+			}
+		//LOOP/LOOPZ/LOOPNZ --CX times
+		case 0b11100010:
+			fallthrough
+		case 0b11100001:
+			fallthrough
+		case 0b11100000:
+			condition := [3]byte{ZF ^ 1, ZF, 1}[fileData[position]&0b00000011]
+			position++
+			if position == dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			CX--
+			if CX > 0 && condition != 0 {
+				IP = calculateJumpB(fileData[position], position)
+				ipModified = true
+			}
+		//JXCZ
+		case 0b11100011:
+			position++
+			if position == dataLength {
+				return newInvalidParameterErrorPrematureEndOfStream(position)
+			}
+			if CX == 0 {
+				IP = calculateJumpB(fileData[position], position)
+				ipModified = true
+			}
+
 		default:
 			return newUnsupportedError(position, "unsupported instruction")
-			//return &DecodingError{Message: "invalid instruction", Pos: position}
 		}
 
-		IP = uint16(position + 1)
-		logStateAndInstruction(fileData[startOfInstruction:position+1], logger)
+		if ipModified {
+			logStateAndInstruction(fileData[startOfInstruction:position+1], logger)
+			position = int(IP - 1)
+		} else {
+			IP = uint16(position + 1)
+			logStateAndInstruction(fileData[startOfInstruction:position+1], logger)
+		}
 		startOfInstruction = position + 1
 	}
 
@@ -385,6 +501,8 @@ func Rest() {
 	SF = 0
 	ZF = 0
 	AF = 0
+	PF = 0
+	CF = 0
 }
 
 func logStateAndInstruction(instruction []byte, logger *log.Logger) {

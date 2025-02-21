@@ -1,10 +1,5 @@
 package Simulation
 
-import (
-	"fmt"
-	"strings"
-)
-
 const (
 	_L      uint16 = 0b0000000011111111
 	_H      uint16 = 0b1111111100000000
@@ -127,59 +122,6 @@ func signExtend(x uint16) uint16 {
 	return signExtension | x
 }
 
-func add(addend1, addend2 uint16, wide bool) uint16 {
-	var maxValue uint32
-	var signBit uint16
-	if wide {
-		maxValue = uint32(_W_MAX)
-		signBit = _W_SIGN
-	} else {
-		maxValue = uint32(_B_MAX)
-		signBit = _B_SIGN
-	}
-	sum := uint32(addend1)&maxValue + uint32(addend2)&maxValue
-	truncatedSum := uint16(sum & maxValue)
-
-	if sum > maxValue {
-		CF = 1
-	} else {
-		CF = 0
-	}
-	if (addend1&0b1111)+(addend2&0b1111) > 0b1111 {
-		AF = 1
-	} else {
-		AF = 0
-	}
-
-	sign1 := addend1 & signBit
-	sign2 := addend2 & signBit
-	signSum := truncatedSum & signBit
-	if sign1&sign2 == signSum || sign1|sign2 == signSum {
-		OF = 0
-	} else {
-		OF = 1
-	}
-	setCommonFlags(truncatedSum, signBit)
-	return truncatedSum
-}
-
-func sub(minuend, subtrahend uint16, wide bool) uint16 {
-	var maxValue uint16
-	if wide {
-		maxValue = _W_MAX
-	} else {
-		maxValue = uint16(_B_MAX)
-	}
-	negatedSubtrahend := subtrahend ^ maxValue + 1
-	difference := add(minuend, negatedSubtrahend, wide)
-
-	//Carry/AuxCarry/Overflow flags for subtraction are the opposite to the addition flags
-	CF = CF ^ 1
-	AF = AF ^ 1
-
-	return difference
-}
-
 func setCommonFlags(value uint16, signBit uint16) {
 	if value == 0 {
 		ZF = 1
@@ -201,53 +143,10 @@ func setCommonFlags(value uint16, signBit uint16) {
 	}
 }
 
-// formatState formats the state in a loggable format.
-func formatState() string {
-	builder := strings.Builder{}
-	if TF != 0 {
-		builder.WriteString("T")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if DF != 0 {
-		builder.WriteString("D")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if IF != 0 {
-		builder.WriteString("I")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if OF != 0 {
-		builder.WriteString("O")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if SF != 0 {
-		builder.WriteString("S")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if ZF != 0 {
-		builder.WriteString("Z")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if AF != 0 {
-		builder.WriteString("A")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if PF != 0 {
-		builder.WriteString("P")
-	} else {
-		builder.WriteByte(' ')
-	}
-	if CF != 0 {
-		builder.WriteString("C")
-	} else {
-		builder.WriteByte(' ')
-	}
-	return fmt.Sprintf("AX:0x%04x BX:0x%04x CX:0x%04x DX:0x%04x SP:0x%04x BP:0x%04x SI:0x%04x DI:0x%04x IP:0x%04x CS:0x%04x DS:0x%04x SS:0x%04x ES:0x%04x F:%9s", AX, BX, CX, DX, SP, BP, SI, DI, IP, CS, DS, SS, ES, builder.String())
+func calculateJump(offset uint16, position int) uint16 {
+	return uint16((uint32(position+1) + uint32(offset)) & uint32(_W_MAX))
+}
+
+func calculateJumpB(offset uint8, position int) uint16 {
+	return calculateJump(signExtend(uint16(offset)), position)
 }
