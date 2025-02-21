@@ -1,9 +1,9 @@
 package Disassembly
 
 import (
-  "strconv"
+	"strconv"
 
-  "github.com/P100sch/Intel8086Simulator/Simulation/Shared"
+	"github.com/P100sch/Intel8086Simulator/Simulation/Shared"
 )
 
 // disassembleStandardParameters disassembles a standard parameter in data at position and returns the full assembly instruction
@@ -22,46 +22,46 @@ import (
 //   - invalid segment register
 //   - end of instruction stream reached before complete decoding
 func disassembleStandardParameters(name, segmentOverride string, noFirst, sourceInReg, segmentRegister, immediate, signExtended bool, wide byte, data []byte, position *int) (string, error) {
-  var err error
-  var first, second string
-  var mod = data[*position] & Shared.ModMask
-  if !noFirst && !immediate {
-    if segmentRegister {
-      wide = Shared.WIDE
-      var valid bool
-      first, valid = disassembleSegmentRegister(data[*position])
-      if !valid {
-        return "", newInvalidParameterError(*position, "invalid segment register")
-      }
-    } else {
-      first = registers[wide|data[*position]&Shared.RegMask>>3]
-    }
-  }
-  second, err = disassembleRegisterOrMemory(segmentOverride, wide, data, position)
-  if err != nil {
-    return "", err
-  }
-  if immediate {
-    first, err = readData(true, wide != 0 && !signExtended, data, position)
-    if mod != Shared.RegisterMode {
-      if wide == 0 {
-        first = "byte " + first
-      } else {
-        first = "word " + first
-      }
-    }
-  }
-  if noFirst {
-    if mod != Shared.RegisterMode {
-      if wide == 0 {
-        second = "byte " + second
-      } else {
-        second = "word " + second
-      }
-    }
-    return name + second, nil
-  }
-  return name + order(sourceInReg || immediate, first, second), nil
+	var err error
+	var first, second string
+	var mod = data[*position] & Shared.ModMask
+	if !noFirst && !immediate {
+		if segmentRegister {
+			wide = Shared.WIDE
+			var valid bool
+			first, valid = disassembleSegmentRegister(data[*position])
+			if !valid {
+				return "", newInvalidParameterError(*position, "invalid segment register")
+			}
+		} else {
+			first = registers[wide|data[*position]&Shared.RegMask>>3]
+		}
+	}
+	second, err = disassembleRegisterOrMemory(segmentOverride, wide, data, position)
+	if err != nil {
+		return "", err
+	}
+	if immediate {
+		first, err = readData(true, wide != 0 && !signExtended, data, position)
+		if mod != Shared.RegisterMode {
+			if wide == 0 {
+				first = "byte " + first
+			} else {
+				first = "word " + first
+			}
+		}
+	}
+	if noFirst {
+		if mod != Shared.RegisterMode {
+			if wide == 0 {
+				second = "byte " + second
+			} else {
+				second = "word " + second
+			}
+		}
+		return name + second, nil
+	}
+	return name + order(sourceInReg || immediate, first, second), nil
 }
 
 // disassembleRegisterOrMemory disassembles the register/memory portion of parameters in data at position
@@ -73,29 +73,35 @@ func disassembleStandardParameters(name, segmentOverride string, noFirst, source
 // Possible errors:
 //   - end of instruction stream reached before complete decoding
 func disassembleRegisterOrMemory(segmentOverride string, wide byte, data []byte, position *int) (string, error) {
-  var second string
-  mod := data[*position] & Shared.ModMask
-  if mod == Shared.RegisterMode {
-    second = registers[wide|data[*position]&Shared.RMMask]
-  } else {
-    second = memoryRegisters[data[*position]&Shared.RMMask]
+	var second string
+	mod := data[*position] & Shared.ModMask
+	if mod == Shared.RegisterMode {
+		second = registers[wide|data[*position]&Shared.RMMask]
+	} else {
+		second = memoryRegisters[data[*position]&Shared.RMMask]
 
-    if mod != Shared.MemoryMode || second == "BP" {
-      var displacement string
-      displacement, err := readData(mod != Shared.MemoryMode, mod == Shared.MemoryMode || mod == Shared.Memory16Mode, data, position)
-      if err != nil {
-        return "", err
-      }
-      if mod != Shared.MemoryMode {
-        second += " + " + displacement
-      } else {
-        second = displacement
-      }
-    }
+		if mod != Shared.MemoryMode || second == "BP" {
+			var displacement string
+			displacement, err := readData(mod != Shared.MemoryMode, mod == Shared.MemoryMode || mod == Shared.Memory16Mode, data, position)
+			if err != nil {
+				return "", err
+			}
+			if mod != Shared.MemoryMode {
+				if displacement != "0" {
+					if displacement[0] == '-' {
+						second += " - " + displacement[1:]
+					} else {
+						second += " + " + displacement
+					}
+				}
+			} else {
+				second = displacement
+			}
+		}
 
-    second = segmentOverride + "[" + second + "]"
-  }
-  return second, nil
+		second = segmentOverride + "[" + second + "]"
+	}
+	return second, nil
 }
 
 // readData reads a chunk of data as a number and strings it
@@ -107,83 +113,80 @@ func disassembleRegisterOrMemory(segmentOverride string, wide byte, data []byte,
 // Possible errors:
 //   - end of instruction stream reached before complete decoding
 func readData(signed bool, wide bool, data []byte, position *int) (string, error) {
-  length := len(data)
-  var first byte
-  *position++
-  if *position == length {
-    return "", newInvalidParameterErrorPrematureEndOfStream(*position)
-  }
-  first = data[*position]
-  if !wide {
-    if signed {
-      return strconv.Itoa(int(int8(first))), nil
-    } else {
-      return strconv.FormatUint(uint64(first), 10), nil
-    }
-  }
-  *position++
-  if *position == length {
-    return "", newInvalidParameterErrorPrematureEndOfStream(*position)
-  }
-  if signed {
-    return strconv.Itoa(int(int16(first) | int16(data[*position])<<8)), nil
-  } else {
-    return strconv.FormatUint(uint64(first)|uint64(data[*position])<<8, 10), nil
-  }
+	length := len(data)
+	var first byte
+	*position++
+	if *position == length {
+		return "", newInvalidParameterErrorPrematureEndOfStream(*position)
+	}
+	first = data[*position]
+	if !wide {
+		if signed {
+			return strconv.Itoa(int(int8(first))), nil
+		} else {
+			return strconv.FormatUint(uint64(first), 10), nil
+		}
+	}
+	*position++
+	if *position == length {
+		return "", newInvalidParameterErrorPrematureEndOfStream(*position)
+	}
+	if signed {
+		return strconv.Itoa(int(int16(first) | int16(data[*position])<<8)), nil
+	} else {
+		return strconv.FormatUint(uint64(first)|uint64(data[*position])<<8, 10), nil
+	}
 }
 
 // disassembleSegmentRegister tries to disassemble register portion of parameters as a segment register
 func disassembleSegmentRegister(parameters byte) (string, bool) {
-  if parameters&0b00100000 != 0 {
-    return "", false
-  }
-  return segmentRegisters[parameters&Shared.SegMask>>3], true
+	if parameters&0b00100000 != 0 {
+		return "", false
+	}
+	return segmentRegisters[parameters&Shared.SegMask>>3], true
 }
 
 // order concatenates first and second. Source is put last
 func order(sourceInFirst bool, first string, second string) string {
-  if sourceInFirst {
-    return second + ", " + first
-  } else {
-    return first + ", " + second
-  }
+	if sourceInFirst {
+		return second + ", " + first
+	} else {
+		return first + ", " + second
+	}
 }
 
 func disassembleImmediateToAccumulator(name string, wide bool, data []byte, position *int) (string, error) {
-  value, err := readData(true, wide, data, position)
-  if err != nil {
-    return "", err
-  }
-  if wide {
-    return name + "AX, " + value, nil
-  }
-  return name + "AL, " + value, nil
+	value, err := readData(true, wide, data, position)
+	if err != nil {
+		return "", err
+	}
+	if wide {
+		return name + "AX, " + value, nil
+	}
+	return name + "AL, " + value, nil
 }
 
 func readAndDisassembleImmediateIntraSegmentJump(name string, wide bool, data []byte, position *int) (string, error) {
-  length := len(data)
-  var first byte
-  var value int
-  *position++
-  if *position == length {
-    return "", newInvalidParameterErrorPrematureEndOfStream(*position)
-  }
-  first = data[*position]
-  if !wide {
-    value = int(int8(first))
-  } else {
-    *position++
-    if *position == length {
-      return "", newInvalidParameterErrorPrematureEndOfStream(*position)
-    }
-    value = int(int16(first) | int16(data[*position])<<8)
-  }
-  value += 2
-  if value == 0 {
-    return name + " $+0", nil
-  }
-  if value < 0 {
-    return name + " $" + strconv.Itoa(value) + "+0", nil
-  }
-  return name + " $+" + strconv.Itoa(value) + "+0", nil
+	length := len(data)
+	var first byte
+	var value int
+	*position++
+	if *position == length {
+		return "", newInvalidParameterErrorPrematureEndOfStream(*position)
+	}
+	first = data[*position]
+	if !wide {
+		value = int(int8(first))
+	} else {
+		*position++
+		if *position == length {
+			return "", newInvalidParameterErrorPrematureEndOfStream(*position)
+		}
+		value = int(int16(first) | int16(data[*position])<<8)
+	}
+	value += 2
+	if value < 0 {
+		return name + " $" + strconv.Itoa(value), nil
+	}
+	return name + " $+" + strconv.Itoa(value), nil
 }
