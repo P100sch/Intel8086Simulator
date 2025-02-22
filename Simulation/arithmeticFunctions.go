@@ -1,6 +1,6 @@
 package Simulation
 
-func add(addend1, addend2 uint16, wide bool) uint16 {
+func addAndUpdateFlags(addend1, addend2 uint16, wide bool) uint16 {
 	var maxValue uint32
 	var signBit uint16
 	if wide {
@@ -36,7 +36,7 @@ func add(addend1, addend2 uint16, wide bool) uint16 {
 	return truncatedSum
 }
 
-func sub(minuend, subtrahend uint16, wide bool) uint16 {
+func subAndUpateFlags(minuend, subtrahend uint16, wide bool) uint16 {
 	var maxValue uint16
 	if wide {
 		maxValue = _W_MAX
@@ -44,7 +44,7 @@ func sub(minuend, subtrahend uint16, wide bool) uint16 {
 		maxValue = uint16(_B_MAX)
 	}
 	negatedSubtrahend := subtrahend ^ maxValue + 1
-	difference := add(minuend, negatedSubtrahend, wide)
+	difference := addAndUpdateFlags(minuend, negatedSubtrahend, wide)
 
 	if minuend < subtrahend {
 		CF = 1
@@ -58,4 +58,12 @@ func sub(minuend, subtrahend uint16, wide bool) uint16 {
 	}
 
 	return difference
+}
+
+func wrapAdd(addend1, addend2 uint16) uint16 {
+	return uint16((uint32(addend1) + uint32(addend2)) & uint32(_W_MAX))
+}
+
+func wrapIncrement(x uint16) uint16 {
+	return wrapAdd(x, 1)
 }

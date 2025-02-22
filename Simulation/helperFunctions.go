@@ -1,5 +1,7 @@
 package Simulation
 
+import "github.com/P100sch/Intel8086Simulator/Simulation/Shared"
+
 const (
 	_L      uint16 = 0b0000000011111111
 	_H      uint16 = 0b1111111100000000
@@ -8,6 +10,8 @@ const (
 	_W_MAX  uint16 = 0b1111111111111111
 	_B_MAX  byte   = 0b11111111
 )
+
+const RESET_CS uint16 = 0xFFFF
 
 func readH(w uint16) uint16 {
 	return w & _H >> 8
@@ -99,24 +103,6 @@ func writeRegister(register byte, value uint16) {
 	}
 }
 
-func readWord(data []byte, position int) uint16 {
-	return uint16(data[position-1]) | uint16(data[position])<<8
-}
-
-func read(data []byte, position *int, wide bool) (uint16, error) {
-	*position++
-	if wide {
-		*position++
-	}
-	if *position >= len(data) {
-		return 0, newInvalidParameterErrorPrematureEndOfStream(*position)
-	}
-	if wide {
-		return readWord(data, *position), nil
-	}
-	return uint16(data[*position]), nil
-}
-
 func signExtend(x uint16) uint16 {
 	signExtension := x & 0b10000000 >> 7 * _H
 	return signExtension | x
@@ -143,10 +129,92 @@ func setCommonFlags(value uint16, signBit uint16) {
 	}
 }
 
-func calculateJump(offset uint16, position int) uint16 {
-	return uint16((uint32(position+1) + uint32(offset)) & uint32(_W_MAX))
+func calculateJump(offset uint16, currentOffset uint16) uint16 {
+	return uint16((uint32(currentOffset+1) + uint32(offset)) & uint32(_W_MAX))
 }
 
-func calculateJumpB(offset uint8, position int) uint16 {
-	return calculateJump(signExtend(uint16(offset)), position)
+func calculateJumpB(offset uint8, currentOffset uint16) uint16 {
+	return calculateJump(signExtend(uint16(offset)), currentOffset)
+}
+
+func calculateSegmentAndDisplacementByParameter(parameter byte, parameterOffset uint16) (segment, displacement uint16) {
+	displacementOffset := wrapIncrement(parameterOffset)
+	segment = DS
+	rm := parameter & Shared.RMMask
+	switch rm {
+	case 0b000:
+		displacement = wrapAdd(BX, SI)
+	case 0b001:
+		displacement = wrapAdd(BX, DI)
+	case 0b010:
+		displacement = wrapAdd(BP, SI)
+	case 0b011:
+		displacement = wrapAdd(BP, DI)
+	case 0b100:
+		displacement = SI
+	case 0b101:
+		displacement = DI
+	case 0b110:
+		displacement = BP
+		segment = SS
+	case 0b111:
+		displacement = BX
+	}
+	switch parameter & Shared.ModMask {
+	case Shared.MemoryMode:
+		if rm != 0b110 {
+			return
+		}
+		segment = DS
+		displacement = readCodeW(displacementOffset)
+		return
+	case Shared.Memory8Mode:
+		displacement = wrapAdd(displacement, uint16(readCodeB(displacementOffset)))
+		return
+	case Shared.Memory16Mode:
+		displacement = wrapAdd(displacement, readCodeW(displacementOffset))
+		return
+	case Shared.RegisterMode:
+		segment = 0
+		displacement = 0
+		return
+	default:
+		panic("impossible state")
+	}
+}
+
+func incrementIPByParameter(currentIP uint16, parameter byte) uint16 {
+	var newIP uint16
+	switch parameter & Shared.ModMask {
+	case Shared.RegisterMode:
+		return currentIP
+	case Shared.MemoryMode:
+		if parameter&Shared.RMMask != 0b110 {
+			return currentIP
+		}
+		return wrapAdd(currentIP, 2)
+	case Shared.Memory8Mode:
+		return wrapIncrement(currentIP)
+	case Shared.Memory16Mode:
+		return wrapAdd(currentIP, 2)
+	}
+	return newIP
+}
+
+func readRMValueSegmentAndDisplacementByParameter(parameter byte, parameterOffset uint16, wide byte) (value, segment, displacement uint16) {
+	if parameter&Shared.ModMask != Shared.RegisterMode {
+		segment, displacement = calculateSegmentAndDisplacementByParameter(parameter, parameterOffset)
+		value = read(segment, displacement, wide != 0)
+	} else {
+		value = readRegister(wide | parameter&Shared.RMMask)
+	}
+	return
+}
+
+func writeRMValue(parameter byte, segment, displacement, value uint16, wide byte) {
+	if parameter&Shared.ModMask != Shared.RegisterMode {
+		write(segment, displacement, value, wide != 0)
+	} else {
+		writeRegister(wide|parameter&Shared.RMMask, value)
+	}
 }

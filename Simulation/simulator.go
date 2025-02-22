@@ -16,23 +16,19 @@ type DecodingError struct {
 }
 
 func (e *DecodingError) Error() string {
-	return "Position " + strconv.Itoa(e.Pos) + ": " + e.Message
+	return "Position " + strconv.FormatInt(int64(e.Pos), 16) + ": " + e.Message
 }
 
-func newInvalidParameterError(position int, cause string) *DecodingError {
-	return &DecodingError{Message: "invalid parameters (" + cause + ")", Pos: position}
+func newInvalidParameterError(segment, offset uint16, cause string) *DecodingError {
+	return &DecodingError{Message: "invalid parameters (" + cause + ")", Pos: convertVirtualAddress(segment, offset)}
 }
 
-func newInvalidParameterErrorPrematureEndOfStream(position int) *DecodingError {
-	return newInvalidParameterError(position, "reached end of instruction stream while decoding")
+func newInvalidParameterErrorInvalidInstruction(segment, offset uint16) *DecodingError {
+	return newInvalidParameterError(segment, offset, "invalid instruction in register portion")
 }
 
-func newInvalidParameterErrorInvalidInstruction(position int) *DecodingError {
-	return newInvalidParameterError(position, "invalid instruction in register portion")
-}
-
-func newUnsupportedError(position int, reason string) *DecodingError {
-	return &DecodingError{Message: "unsupported function (" + reason + ")", Pos: position}
+func newUnsupportedError(segment, offset uint16, reason string) *DecodingError {
+	return &DecodingError{Message: "unsupported function (" + reason + ")", Pos: convertVirtualAddress(segment, offset)}
 }
 
 //endregion
@@ -44,54 +40,39 @@ func newUnsupportedError(position int, reason string) *DecodingError {
 //   - instruction stream stops before complete decoding of instruction
 //
 //goland:noinspection SpellCheckingInspection
-func Simulate(fileData []byte, logger *log.Logger) error {
-	var err error
-	dataLength := len(fileData)
-	startOfInstruction := 0
+func Simulate(logger *log.Logger) error {
+	var startOfInstruction = IP
 
-	var sourceValue uint16
-
-	for position := 0; position < dataLength; position++ {
-		var ipModified = false
-
-		switch fileData[position] {
+	for {
+		currentInstructionByte := readCodeB(IP)
+		switch currentInstructionByte {
 
 		//Standard MOV permutations
 		case 0b10001000:
 			fallthrough
 		case 0b10001001:
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			sourceValue = readRegister(wide | fileData[position]&Shared.RegMask>>3)
-			if fileData[position]&Shared.ModMask == Shared.RegisterMode {
-				writeRegister(wide|fileData[position]&Shared.RMMask, sourceValue)
-			} else {
-				return newUnsupportedError(position, "memory not implemented")
-			}
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			sourceValue := readRegister(wide | parameter&Shared.RegMask>>3)
+			segment, offset := calculateSegmentAndDisplacementByParameter(parameter, IP)
+			writeRMValue(parameter, segment, offset, sourceValue, wide)
+			IP = incrementIPByParameter(IP, parameter)
 		case 0b10001010:
 			fallthrough
 		case 0b10001011:
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			if fileData[position]&Shared.ModMask == Shared.RegisterMode {
-				sourceValue = readRegister(wide | fileData[position]&Shared.RMMask)
-			} else {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			writeRegister(wide|fileData[position]&Shared.RegMask>>3, sourceValue)
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			sourceValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			writeRegister(wide|parameter&Shared.RegMask>>3, sourceValue)
+			IP = incrementIPByParameter(IP, parameter)
 		//MOV segment register to R/M
 		case 0b10001100:
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			switch fileData[position] & Shared.RegMask {
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			var sourceValue uint16
+			switch parameter & Shared.RegMask {
 			case 0b000000:
 				sourceValue = ES
 			case 0b001000:
@@ -101,58 +82,51 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 			case 0b011000:
 				sourceValue = DS
 			default:
-				return newInvalidParameterErrorInvalidInstruction(position)
+				return newInvalidParameterErrorInvalidInstruction(CS, IP)
 			}
-			if fileData[position]&Shared.ModMask == Shared.RegisterMode {
-				writeRegister(Shared.WIDE|fileData[position]&Shared.RMMask, sourceValue)
-			} else {
-				return newUnsupportedError(position, "memory not implemented")
-			}
+			segment, offset := calculateSegmentAndDisplacementByParameter(parameter, IP)
+			writeRMValue(parameter, segment, offset, sourceValue, Shared.WIDE)
+			IP = incrementIPByParameter(IP, parameter)
 		//MOV R/M to segment register
 		case 0b10001110:
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			if fileData[position]&Shared.ModMask == Shared.RegisterMode {
-				sourceValue = readRegister(Shared.WIDE | fileData[position]&Shared.RMMask)
-			} else {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			switch fileData[position] & Shared.RegMask {
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			sourceValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, Shared.WIDE)
+			IP = incrementIPByParameter(IP, parameter)
+			switch parameter & Shared.RegMask {
 			case 0b000000:
 				ES = sourceValue
 			case 0b001000:
+				instruction := readInstruction(startOfInstruction, IP)
 				CS = sourceValue
+				IP = wrapIncrement(IP)
+				logStateAndInstruction(instruction, logger)
+				startOfInstruction = IP
+				continue
 			case 0b010000:
 				SS = sourceValue
 			case 0b011000:
 				DS = sourceValue
 			default:
-				return newInvalidParameterErrorInvalidInstruction(position)
+				return newInvalidParameterErrorInvalidInstruction(CS, IP)
 			}
 		//MOV immediate
 		case 0b11000110:
 			fallthrough
 		case 0b11000111:
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			if parameter&Shared.RegMask != 0 {
+				return newInvalidParameterErrorInvalidInstruction(CS, IP)
 			}
-			if fileData[position]&Shared.RegMask != 0 {
-				return newInvalidParameterErrorInvalidInstruction(position)
+			segment, offset := calculateSegmentAndDisplacementByParameter(parameter, IP)
+			IP = wrapIncrement(incrementIPByParameter(IP, parameter))
+			immediate := readCode(IP, wide != 0)
+			if wide != 0 {
+				IP = wrapIncrement(IP)
 			}
-			rmBits := fileData[position] & Shared.RMMask
-			sourceValue, err = read(fileData, &position, wide != 0)
-			if err != nil {
-				return err
-			}
-			if fileData[position]&Shared.ModMask == Shared.RegisterMode {
-				writeRegister(wide|rmBits, sourceValue)
-			} else {
-				return newUnsupportedError(position, "memory not implemented")
-			}
+			writeRMValue(parameter, segment, offset, immediate, wide)
 		//MOV immediate into register
 		case 0b10110000:
 			fallthrough
@@ -185,10 +159,11 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b10111110:
 			fallthrough
 		case 0b10111111:
-			register := fileData[position] & 0b00001111
-			sourceValue, err = read(fileData, &position, register > 0b0111)
-			if err != nil {
-				return err
+			register := currentInstructionByte & 0b00001111
+			IP = wrapIncrement(IP)
+			sourceValue := readCode(IP, register > 0b0111)
+			if register > 0b0111 {
+				IP = wrapIncrement(IP)
 			}
 			writeRegister(register, sourceValue)
 
@@ -200,36 +175,32 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b10000010:
 			fallthrough
 		case 0b10000011:
-			signExtended := fileData[position]&Shared.DirectionMask != 0
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			operation := fileData[position] & Shared.RegMask
-			register := fileData[position] & Shared.RMMask
-			if fileData[position]&Shared.ModMask != Shared.RegisterMode {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			var immediate uint16
-			immediate, err = read(fileData, &position, wide != 0 && !signExtended)
-			if err != nil {
-				return err
+			signExtended := currentInstructionByte&Shared.DirectionMask != 0
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			sourceValue, segment, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			IP = wrapIncrement(incrementIPByParameter(IP, parameter))
+			immediate := readCode(IP, wide != 0 && !signExtended)
+			if wide != 0 && !signExtended {
+				IP = wrapIncrement(IP)
 			}
 			if signExtended {
 				immediate = signExtend(immediate)
 			}
-			//var name = [8]string{"ADD ", "OR ", "ADC ", "SBB ", "AND ", "SUB ", "XOR ", "CMP "}[fileData[position]&Shared.RegMask>>3]
-			switch operation {
+			var result = sourceValue
+			//var name = [8]string{"ADD ", "OR ", "ADC ", "SBB ", "AND ", "SUB ", "XOR ", "CMP "}[parameter&Shared.RegMask>>3]
+			switch parameter & Shared.RegMask {
 			case 0b000000:
-				writeRegister(wide|register, add(readRegister(wide|register), immediate, wide != 0))
+				result = addAndUpdateFlags(sourceValue, immediate, wide != 0)
 			case 0b101000:
-				writeRegister(wide|register, sub(readRegister(wide|register), immediate, wide != 0))
+				result = subAndUpateFlags(sourceValue, immediate, wide != 0)
 			case 0b111000:
-				_ = sub(readRegister(wide|register), immediate, wide != 0)
+				_ = subAndUpateFlags(sourceValue, immediate, wide != 0)
 			default:
-				return newUnsupportedError(position, "operation not implemented")
+				return newUnsupportedError(CS, IP, "operation not implemented")
 			}
+			writeRMValue(parameter, segment, offset, result, wide)
 
 		//ADD register with R/M
 		case 0b00000000:
@@ -239,22 +210,17 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b00000010:
 			fallthrough
 		case 0b00000011:
-			sourceInReg := fileData[position]&Shared.DirectionMask == 0
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			if fileData[position]&Shared.ModMask != Shared.RegisterMode {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			reg := wide | (fileData[position] & Shared.RegMask >> 3)
+			sourceInReg := currentInstructionByte&Shared.DirectionMask == 0
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			reg := wide | (parameter & Shared.RegMask >> 3)
 			regValue := readRegister(reg)
-			rmRegister := wide | fileData[position]&Shared.RMMask
-			rmValue := readRegister(wide | rmRegister)
-			sum := add(regValue, rmValue, wide != 0)
+			rmValue, segment, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			IP = incrementIPByParameter(IP, parameter)
+			sum := addAndUpdateFlags(regValue, rmValue, wide != 0)
 			if sourceInReg {
-				writeRegister(rmRegister, sum)
+				writeRMValue(parameter, segment, offset, sum, wide)
 			} else {
 				writeRegister(reg, sum)
 			}
@@ -262,12 +228,13 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b00000100:
 			fallthrough
 		case 0b00000101:
-			wide := fileData[position]&Shared.WideMask != 0
-			sourceValue, err = read(fileData, &position, wide)
-			if err != nil {
-				return err
+			wide := currentInstructionByte&Shared.WideMask != 0
+			IP = wrapIncrement(IP)
+			sourceValue := readCode(IP, wide)
+			if wide {
+				IP = wrapIncrement(IP)
 			}
-			sum := add(AX, sourceValue, wide)
+			sum := addAndUpdateFlags(AX, sourceValue, wide)
 			if wide {
 				AX = sum
 			} else {
@@ -282,34 +249,30 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b00101010:
 			fallthrough
 		case 0b00101011:
-			sourceInReg := fileData[position]&Shared.DirectionMask == 0
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			if fileData[position]&Shared.ModMask != Shared.RegisterMode {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			reg := wide | (fileData[position] & Shared.RegMask >> 3)
+			sourceInReg := currentInstructionByte&Shared.DirectionMask == 0
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			reg := wide | (parameter & Shared.RegMask >> 3)
 			regValue := readRegister(reg)
-			rmRegister := wide | fileData[position]&Shared.RMMask
-			rmValue := readRegister(wide | rmRegister)
+			rmValue, segment, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			IP = incrementIPByParameter(IP, parameter)
 			if sourceInReg {
-				writeRegister(rmRegister, sub(rmValue, regValue, wide != 0))
+				writeRMValue(parameter, segment, offset, subAndUpateFlags(rmValue, regValue, wide != 0), wide)
 			} else {
-				writeRegister(reg, sub(regValue, rmValue, wide != 0))
+				writeRegister(reg, subAndUpateFlags(regValue, rmValue, wide != 0))
 			}
 		//SUB immediate from accumulator
 		case 0b00101100:
 			fallthrough
 		case 0b00101101:
-			wide := fileData[position]&Shared.WideMask != 0
-			sourceValue, err = read(fileData, &position, wide)
-			if err != nil {
-				return err
+			wide := currentInstructionByte&Shared.WideMask != 0
+			IP = wrapIncrement(IP)
+			sourceValue := readCode(IP, wide)
+			if wide {
+				IP = wrapIncrement(IP)
 			}
-			difference := sub(AX, sourceValue, wide)
+			difference := subAndUpateFlags(AX, sourceValue, wide)
 			if wide {
 				AX = difference
 			} else {
@@ -324,59 +287,59 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b00111010:
 			fallthrough
 		case 0b00111011:
-			sourceInReg := fileData[position]&Shared.DirectionMask == 0
-			wide := Shared.IsolateAndShiftWide(fileData[position])
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			if fileData[position]&Shared.ModMask != Shared.RegisterMode {
-				return newUnsupportedError(position, "memory not implemented")
-			}
-			regValue := readRegister(wide | (fileData[position] & Shared.RegMask >> 3))
-			rmRegister := wide | fileData[position]&Shared.RMMask
-			rmValue := readRegister(wide | rmRegister)
-			sourceValue = readRegister(wide | rmRegister)
+			sourceInReg := currentInstructionByte&Shared.DirectionMask == 0
+			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
+			IP = wrapIncrement(IP)
+			parameter := readCodeB(IP)
+			regValue := readRegister(wide | (parameter & Shared.RegMask >> 3))
+			rmValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
 			if sourceInReg {
-				_ = sub(rmValue, regValue, wide != 0)
+				_ = subAndUpateFlags(rmValue, regValue, wide != 0)
 			} else {
-				_ = sub(regValue, rmValue, wide != 0)
+				_ = subAndUpateFlags(regValue, rmValue, wide != 0)
 			}
 		//CMP immediate with accumulator
 		case 0b00111100:
 			fallthrough
 		case 0b00111101:
-			wide := fileData[position]&Shared.WideMask != 0
-			sourceValue, err = read(fileData, &position, wide)
-			if err != nil {
-				return err
+			wide := currentInstructionByte&Shared.WideMask != 0
+			IP = wrapIncrement(IP)
+			sourceValue := readCode(IP, wide)
+			if wide {
+				IP = wrapIncrement(IP)
 			}
-			_ = sub(AX, sourceValue, wide)
+			_ = subAndUpateFlags(AX, sourceValue, wide)
 
 		//JMP
 		case 0b11101001:
-			position += 2
-			if position >= dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			IP = calculateJump(uint16(fileData[position-1])+uint16(fileData[position])<<8, position)
-			ipModified = true
+			IP = wrapIncrement(IP)
+			offset := readCodeW(IP)
+			IP = wrapAdd(IP, 2)
+			instruction := readInstruction(startOfInstruction, IP)
+			IP = calculateJump(offset, IP)
+			logStateAndInstruction(instruction, logger)
+			startOfInstruction = IP
+			continue
 		case 0b11101010:
-			position += 4
-			if position >= dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			IP = uint16(fileData[position-3]) + uint16(fileData[position-2])<<8
-			CS = uint16(fileData[position-1]) + uint16(fileData[position-2])<<8
-			ipModified = true
+			IP = wrapIncrement(IP)
+			newIP := readCodeW(IP)
+			IP = wrapAdd(IP, 2)
+			newCS := readCodeW(IP)
+			IP = wrapAdd(IP, 1)
+			instruction := readInstruction(startOfInstruction, IP)
+			CS = newCS
+			IP = newIP
+			logStateAndInstruction(instruction, logger)
+			startOfInstruction = IP
+			continue
 		//JMP byte
 		case 0b11101011:
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
-			IP = calculateJumpB(fileData[position], position)
-			ipModified = true
+			IP = wrapIncrement(IP)
+			instruction := readInstruction(startOfInstruction, IP)
+			IP = calculateJumpB(readCodeB(IP), IP)
+			logStateAndInstruction(instruction, logger)
+			startOfInstruction = IP
+			continue
 		//Conditional jumps
 		case 0b01110100:
 			fallthrough
@@ -427,14 +390,14 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 				0b0001: uint16(OF ^ 1),               //JNO
 				0b1001: uint16(SF ^ 1),               //JNS
 			}
-			condition := conditions[fileData[position]&0b00001111]
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
+			condition := conditions[currentInstructionByte&0b00001111]
+			IP = wrapIncrement(IP)
 			if condition != 0 {
-				IP = calculateJumpB(fileData[position], position)
-				ipModified = true
+				instruction := readInstruction(startOfInstruction, IP)
+				IP = calculateJumpB(readCodeB(IP), IP)
+				logStateAndInstruction(instruction, logger)
+				startOfInstruction = IP
+				continue
 			}
 		//LOOP/LOOPZ/LOOPNZ --CX times
 		case 0b11100010:
@@ -442,42 +405,41 @@ func Simulate(fileData []byte, logger *log.Logger) error {
 		case 0b11100001:
 			fallthrough
 		case 0b11100000:
-			condition := [3]byte{ZF ^ 1, ZF, 1}[fileData[position]&0b00000011]
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
+			condition := [3]byte{ZF ^ 1, ZF, 1}[currentInstructionByte&0b00000011]
+			IP = wrapIncrement(IP)
 			CX--
 			if CX > 0 && condition != 0 {
-				IP = calculateJumpB(fileData[position], position)
-				ipModified = true
+				instruction := readInstruction(startOfInstruction, IP)
+				IP = calculateJumpB(readCodeB(IP), IP)
+				logStateAndInstruction(instruction, logger)
+				startOfInstruction = IP
+				continue
 			}
 		//JXCZ
 		case 0b11100011:
-			position++
-			if position == dataLength {
-				return newInvalidParameterErrorPrematureEndOfStream(position)
-			}
+			IP = wrapIncrement(IP)
 			if CX == 0 {
-				IP = calculateJumpB(fileData[position], position)
-				ipModified = true
+				instruction := readInstruction(startOfInstruction, IP)
+				IP = calculateJumpB(readCodeB(IP), IP)
+				logStateAndInstruction(instruction, logger)
+				startOfInstruction = IP
+				continue
 			}
+
+		//HLT
+		case 0b11110100:
+			logStateAndInstruction(readInstruction(startOfInstruction, IP), logger)
+			return nil
 
 		default:
-			return newUnsupportedError(position, "unsupported instruction")
+			return newUnsupportedError(CS, IP, "unsupported instruction")
 		}
 
-		if ipModified {
-			logStateAndInstruction(fileData[startOfInstruction:position+1], logger)
-			position = int(IP - 1)
-		} else {
-			IP = uint16(position + 1)
-			logStateAndInstruction(fileData[startOfInstruction:position+1], logger)
-		}
-		startOfInstruction = position + 1
+		instruction := readInstruction(startOfInstruction, IP)
+		IP = wrapIncrement(IP)
+		logStateAndInstruction(instruction, logger)
+		startOfInstruction = IP
 	}
-
-	return nil
 }
 
 func Rest() {
@@ -490,7 +452,7 @@ func Rest() {
 	SI = 0
 	DI = 0
 	IP = 0
-	CS = 0
+	CS = RESET_CS
 	DS = 0
 	SS = 0
 	ES = 0

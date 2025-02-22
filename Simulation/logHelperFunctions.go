@@ -2,8 +2,19 @@ package Simulation
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
+
+// end exclusive
+func readInstruction(start, end uint16) []byte {
+	baseAddress := int(CS) << 4
+	if start > end {
+		return slices.Concat(Memory[baseAddress+int(start):], Memory[:baseAddress+int(end)+1])
+	} else {
+		return Memory[baseAddress+int(start) : baseAddress+int(end)+1]
+	}
+}
 
 // formatState formats the state in a loggable format.
 func formatState() string {
