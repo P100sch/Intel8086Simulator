@@ -37,8 +37,10 @@ func newInvalidParameterErrorInvalidInstruction(position int) *DisassembleError 
 //   - invalid instruction
 //   - invalid parameters
 //   - instruction stream stops before complete decoding of instruction
+//
 //goland:noinspection SpellCheckingInspection
 func Disassemble(data []byte) (string, error) {
+	startOfInsctruction := -1
 	builder := strings.Builder{}
 
 	var err error
@@ -84,7 +86,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//MOV accumulator to memory
 		case 0b10100000:
 			fallthrough
@@ -107,7 +108,6 @@ func Disassemble(data []byte) (string, error) {
 			second := "[" + strconv.FormatUint(uint64(data[position-1])|uint64(data[position])<<8, 10) + "]"
 			builder.WriteString("MOV ")
 			builder.WriteString(order(accumulatorIsSource, first, second))
-			builder.WriteString("\n")
 		//MOV immediate into register
 		case 0b10110000:
 			fallthrough
@@ -150,7 +150,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(value)
-			builder.WriteString("\n")
 
 		//PUSH segment register
 		case 0b00000110:
@@ -184,7 +183,6 @@ func Disassemble(data []byte) (string, error) {
 			} else {
 				builder.WriteString(registers[data[position]&0b00000111|0b00001000])
 			}
-			builder.WriteString("\n")
 
 		//POP R/M
 		case 0b10001111:
@@ -200,7 +198,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//POP segment register
 		case 0b00000111:
 			fallthrough
@@ -233,7 +230,6 @@ func Disassemble(data []byte) (string, error) {
 			} else {
 				builder.WriteString(registers[data[position]&0b00000111|0b00001000])
 			}
-			builder.WriteString("\n")
 
 		//XCHG register and R/M
 		case 0b10000110:
@@ -249,7 +245,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//XCHG register and accumulator
 		case 0b10010000:
 			fallthrough
@@ -268,7 +263,6 @@ func Disassemble(data []byte) (string, error) {
 		case 0b10010111:
 			builder.WriteString("XCHG AX, ")
 			builder.WriteString(registers[data[position]&0b00000111|0b00001000])
-			builder.WriteString("\n")
 
 		//IN fixed port
 		case 0b11100101:
@@ -286,7 +280,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(value)
-			builder.WriteString("\n")
 		//OUT fixed port
 		case 0b11100111:
 			fallthrough
@@ -341,7 +334,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//ADD/OR/ADC/SUB/AND/SBB/CMP immediate to R/M
 		case 0b10000000:
@@ -363,7 +355,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//ADD/ADC register with R/M
 		case 0b00000000:
@@ -398,7 +389,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//ADD immediate to accumulator
 		case 0b00000100:
 			fallthrough
@@ -409,7 +399,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//ADC immediate to accumulator
 		case 0b00010100:
 			fallthrough
@@ -420,7 +409,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//SUB/SBB register and R/M
 		case 0b00011000:
@@ -455,7 +443,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//SUB immediate from accumulator
 		case 0b00101100:
 			fallthrough
@@ -466,7 +453,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//SBB immediate from accumulator
 		case 0b00011100:
 			fallthrough
@@ -477,7 +463,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//INC register
 		case 0b01000000:
@@ -497,7 +482,6 @@ func Disassemble(data []byte) (string, error) {
 		case 0b01000111:
 			builder.WriteString("INC ")
 			builder.WriteString(registers[data[position]&Shared.RMMask|0b00001000])
-			builder.WriteString("\n")
 		//DEC register
 		case 0b01001000:
 			fallthrough
@@ -516,7 +500,6 @@ func Disassemble(data []byte) (string, error) {
 		case 0b01001111:
 			builder.WriteString("DEC ")
 			builder.WriteString(registers[data[position]&0b00001111])
-			builder.WriteString("\n")
 
 		//TEST/NOT/NEG/MUL/IMUL/DIV/IDIV R/M
 		case 0b11110110:
@@ -537,7 +520,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//CMP register to R/M
 		case 0b00111000:
@@ -558,7 +540,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//CMP immediate with accumulator
 		case 0b00111100:
 			fallthrough
@@ -569,7 +550,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//AAM/AAD
 		case 0b11010100:
@@ -639,7 +619,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//AND immediate to accumulator
 		case 0b00100100:
 			fallthrough
@@ -650,7 +629,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//OR register with R/M
 		case 0b00001000:
@@ -671,7 +649,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//OR immediate to accumulator
 		case 0b00001100:
 			fallthrough
@@ -682,7 +659,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//XOR register with R/M
 		case 0b00110000:
@@ -703,7 +679,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//XOR immediate to accumulator
 		case 0b00110100:
 			fallthrough
@@ -714,7 +689,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//TEST register and R/S
 		case 0b10000100:
@@ -730,7 +704,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 		//TEST immediate with accumulator
 		case 0b10101000:
 			fallthrough
@@ -741,7 +714,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//REP
 		case 0b11110010:
@@ -821,7 +793,6 @@ func Disassemble(data []byte) (string, error) {
 			}
 			builder.WriteString(name)
 			builder.WriteString(strconv.FormatUint(value, 10))
-			builder.WriteString("\n")
 		//CALL direct inter segment
 		case 0b10011010:
 			fallthrough
@@ -841,7 +812,6 @@ func Disassemble(data []byte) (string, error) {
 			builder.WriteString(strconv.FormatUint(uint64(data[position-1])|uint64(data[position])<<8, 10))
 			builder.WriteString(":")
 			builder.WriteString(strconv.FormatUint(uint64(data[position-3])|uint64(data[position-2])<<8, 10))
-			builder.WriteString("\n")
 
 		//INC/DEC/CALL/JMP/CALL far/JMP far/PUSH R/M
 		case 0b11111110:
@@ -880,7 +850,6 @@ func Disassemble(data []byte) (string, error) {
 				assembly = strings.Replace(assembly, "word", "far", 1)
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//JO
 		case 0b01110000:
@@ -972,7 +941,6 @@ func Disassemble(data []byte) (string, error) {
 				return "", err
 			}
 			builder.WriteString(assembly)
-			builder.WriteString("\n")
 
 		//INT
 		case 0b11001101:
@@ -982,7 +950,6 @@ func Disassemble(data []byte) (string, error) {
 			}
 			builder.WriteString("INT ")
 			builder.WriteString(strconv.FormatUint(uint64(data[position]), 10))
-			builder.WriteString("\n")
 
 		//ESC
 		case 0b11011000:
@@ -1011,7 +978,6 @@ func Disassemble(data []byte) (string, error) {
 			builder.WriteString(strconv.FormatUint(uint64(opcode|data[position]&Shared.RegMask>>3), 10))
 			builder.WriteString(", ")
 			builder.WriteString(second)
-			builder.WriteString("\n")
 
 		//SEGMENT override
 		case 0b00100110:
@@ -1110,7 +1076,12 @@ func Disassemble(data []byte) (string, error) {
 			return "", &DisassembleError{Message: "invalid instruction", Pos: position}
 		}
 
+		builder.WriteString(" ; ")
+		builder.WriteString(strconv.Itoa(position - startOfInsctruction))
+		builder.WriteString("bytes\n")
+
 		segmentOverride = ""
+		startOfInsctruction = position
 	}
 
 	return strings.TrimSuffix(builder.String(), "\n"), nil
