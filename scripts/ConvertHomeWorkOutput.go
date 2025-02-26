@@ -27,14 +27,18 @@ type modifiedRegister struct {
 }
 
 type state struct {
+	clocks            string
 	flags             [9]byte
 	modifiedRegisters []modifiedRegister
 }
+
+var clockShift = 15
 
 func main() {
 	var err error
 	var inFile = os.Stdin
 	var outWriter = os.Stdout
+	var skipClock = false
 
 	dir, err := os.MkdirTemp("", "Intel8086SimulatorConversion")
 	if err != nil {
@@ -47,6 +51,13 @@ func main() {
 	}()
 
 	if len(os.Args) > 1 {
+		if index := strings.LastIndex(os.Args[1], "listing_"); index != -1 {
+			parts := strings.Split(os.Args[1][index:], "_")
+			if number, err := strconv.Atoi(parts[1]); err == nil {
+				skipClock = number < 56
+			}
+		}
+
 		if os.Args[1][0] == '.' || os.Args[1][0] == os.PathSeparator {
 			inFile, err = os.Open(os.Args[1])
 			if err != nil {
@@ -95,7 +106,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	_, err = fmt.Fprintln(outWriter, "AX:0x0000 BX:0x0000 CX:0x0000 DX:0x0000 SP:0x0000 BP:0x0000 SI:0x0000 DI:0x0000 IP:0x0000 CS:0x0000 DS:0x0000 SS:0x0000 ES:0x0000 F:          ; JMP 0:0 ; 5bytes")
+	_, err = fmt.Fprint(outWriter, "AX:0x0000 BX:0x0000 CX:0x0000 DX:0x0000 SP:0x0000 BP:0x0000 SI:0x0000 DI:0x0000 IP:0x0000 CS:0x0000 DS:0x0000 SS:0x0000 ES:0x0000 F:          ; JMP 0:0 ; 5bytes")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if skipClock {
+		_, err = fmt.Fprintln(outWriter)
+	} else {
+		_, err = fmt.Fprintln(outWriter, " +15 = 15")
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -121,9 +140,15 @@ func main() {
 		}
 
 		var modifiedRegisters []modifiedRegister
-		modifiedRegisters, flags = separateRegistersAndFlags(segments[1], flags)
+		var clocks, rest string
+		if skipClock {
+			rest = segments[1]
+		} else {
+			clocks, rest = separateClocks(segments[1], segments[0])
+		}
+		modifiedRegisters, flags = separateRegistersAndFlags(rest, flags)
 
-		states = append(states, state{flags, modifiedRegisters})
+		states = append(states, state{clocks, flags, modifiedRegisters})
 	}
 
 	outputFileName := filepath.Join(dir, "instructions.bin")
@@ -146,6 +171,7 @@ func main() {
 	}
 	lines := strings.Split(disassemblyAsm, "\n")
 
+	var lastClock string
 	for i, currentState := range states {
 		skipIP := false
 		for _, register := range currentState.modifiedRegisters {
@@ -184,22 +210,47 @@ func main() {
 			offset := getInstructionLength(line)
 			registers.IP = (registers.IP + offset) & math.MaxUint16
 		}
-		_, err = fmt.Fprintf(outWriter, "AX:0x%04x BX:0x%04x CX:0x%04x DX:0x%04x SP:0x%04x BP:0x%04x SI:0x%04x DI:0x%04x IP:0x%04x CS:0x%04x DS:0x%04x SS:0x%04x ES:0x%04x F:%9s ; %s\n",
+		_, err = fmt.Fprintf(outWriter, "AX:0x%04x BX:0x%04x CX:0x%04x DX:0x%04x SP:0x%04x BP:0x%04x SI:0x%04x DI:0x%04x IP:0x%04x CS:0x%04x DS:0x%04x SS:0x%04x ES:0x%04x F:%9s ; %s%s\n",
 			registers.AX, registers.BX, registers.CX, registers.DX, registers.SP, registers.BP, registers.SI, registers.DI, registers.IP, registers.CS, registers.DS, registers.SS, registers.ES,
-			string(currentState.flags[:]), line)
+			string(currentState.flags[:]), line, currentState.clocks)
 		if err != nil {
 			log.Fatal(err)
 		}
+		lastClock = currentState.clocks
 	}
 
-	_, err = fmt.Fprintf(outWriter, "AX:0x%04x BX:0x%04x CX:0x%04x DX:0x%04x SP:0x%04x BP:0x%04x SI:0x%04x DI:0x%04x IP:0x%04x CS:0x%04x DS:0x%04x SS:0x%04x ES:0x%04x F:%9s ; %s\n",
+	_, err = fmt.Fprintf(outWriter, "AX:0x%04x BX:0x%04x CX:0x%04x DX:0x%04x SP:0x%04x BP:0x%04x SI:0x%04x DI:0x%04x IP:0x%04x CS:0x%04x DS:0x%04x SS:0x%04x ES:0x%04x F:%9s ; %s%s\n",
 		registers.AX, registers.BX, registers.CX, registers.DX, registers.SP, registers.BP, registers.SI, registers.DI, registers.IP, registers.CS, registers.DS, registers.SS, registers.ES,
-		string(flags[:]), "HLT ; 1bytes")
+		string(flags[:]), "HLT ; 1bytes", modifyHLTClocks(lastClock))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	os.Exit(0)
+}
+
+func separateClocks(s, asm string) (clocks, rest string) {
+	portions := strings.Split(s, " | ")
+	if len(portions) != 2 {
+		clocks = ""
+		rest = s
+		return
+	}
+	clocks = strings.TrimPrefix(portions[0], "Clocks:")
+	override := strings.Split(clocks, " = ")[0]
+	if strings.Contains(asm, "[bp]") {
+		clock, err := strconv.Atoi(override[2:])
+		if err != nil {
+			log.Fatal(err)
+		}
+		clock += 4
+		override = " +" + strconv.Itoa(clock)
+		clocks = strings.Replace(clocks, "5ea", "9ea", 1)
+		clockShift += 4
+	}
+	clocks = incrementClockTotal(clocks, override, clockShift)
+	rest = portions[1]
+	return
 }
 
 func separateRegistersAndFlags(s string, defaultFlags [9]byte) (registers []modifiedRegister, flags [9]byte) {
@@ -264,4 +315,37 @@ func getInstructionLength(s string) uint64 {
 	}
 
 	return offset
+}
+
+func incrementClockTotal(s, clockOverride string, increment int) string {
+	if len(s) < 6 {
+		return ""
+	}
+	segments := strings.Split(s, " = ")
+	portions := strings.Split(segments[1], " (")
+	count, err := strconv.Atoi(portions[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	clock := clockOverride
+	clock += " = " + strconv.Itoa(count+increment)
+	if len(portions) > 1 {
+		clock += " (" + portions[1]
+	}
+	return clock
+}
+
+func modifyHLTClocks(clocks string) string {
+	if len(clocks) < 6 {
+		return ""
+	}
+	segments := strings.Split(clocks, " = ")
+	portions := strings.Split(segments[1], " (")
+	count, err := strconv.Atoi(portions[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	clock := " +2"
+	clock += " = " + strconv.Itoa(count+2)
+	return clock
 }

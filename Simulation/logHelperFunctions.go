@@ -2,8 +2,12 @@ package Simulation
 
 import (
 	"fmt"
+	"log"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/P100sch/Intel8086Simulator/Simulation/Disassembly"
 )
 
 // end exclusive
@@ -13,6 +17,42 @@ func readInstruction(start, end uint16) []byte {
 		return slices.Concat(Memory[baseAddress+int(start):], Memory[:baseAddress+int(end)+1])
 	} else {
 		return Memory[baseAddress+int(start) : baseAddress+int(end)+1]
+	}
+}
+
+func logStateAndInstruction(instruction []byte, instructionClocks, decodingClocks, penaltyClocks, totalClocks int, logger *log.Logger) {
+	if logger != nil {
+		assembly, err := Disassembly.Disassemble(instruction)
+		if err != nil {
+			logger.Println(err.Error())
+			return
+		}
+
+		builder := strings.Builder{}
+
+		builder.WriteString(formatState())
+		builder.WriteString(" ; ")
+		builder.WriteString(assembly)
+		builder.WriteString(" +")
+		builder.WriteString(strconv.Itoa(instructionClocks + decodingClocks + penaltyClocks))
+		builder.WriteString(" = ")
+		builder.WriteString(strconv.Itoa(totalClocks))
+		if decodingClocks != 0 || penaltyClocks != 0 {
+			builder.WriteString(" (")
+			builder.WriteString(strconv.Itoa(instructionClocks))
+			if decodingClocks != 0 {
+				builder.WriteString(" + ")
+				builder.WriteString(strconv.Itoa(decodingClocks))
+				builder.WriteString("ea")
+			}
+			if penaltyClocks != 0 {
+				builder.WriteString(" + ")
+				builder.WriteString(strconv.Itoa(penaltyClocks))
+				builder.WriteString("p")
+			}
+			builder.WriteString(")")
+		}
+		logger.Println(builder.String())
 	}
 }
 

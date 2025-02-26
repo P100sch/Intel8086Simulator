@@ -4,7 +4,6 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/P100sch/Intel8086Simulator/Simulation/Disassembly"
 	"github.com/P100sch/Intel8086Simulator/Simulation/Shared"
 )
 
@@ -42,9 +41,11 @@ func newUnsupportedError(segment, offset uint16, reason string) *DecodingError {
 //goland:noinspection SpellCheckingInspection
 func Simulate(logger *log.Logger) error {
 	var startOfInstruction = IP
+	var baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles int
 
 	for {
 		currentInstructionByte := readCodeB(IP)
+
 		switch currentInstructionByte {
 
 		//Standard MOV permutations
@@ -58,15 +59,17 @@ func Simulate(logger *log.Logger) error {
 			segment, offset := calculateSegmentAndDisplacementByParameter(parameter, IP)
 			writeRMValue(parameter, segment, offset, sourceValue, wide)
 			IP = incrementIPByParameter(IP, parameter)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, true, wide != 0, true, 2, 8, 9)
 		case 0b10001010:
 			fallthrough
 		case 0b10001011:
 			wide := Shared.IsolateAndShiftWide(currentInstructionByte)
 			IP = wrapIncrement(IP)
 			parameter := readCodeB(IP)
-			sourceValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			sourceValue, _, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
 			writeRegister(wide|parameter&Shared.RegMask>>3, sourceValue)
 			IP = incrementIPByParameter(IP, parameter)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, false, wide != 0, true, 2, 8, 9)
 		//MOV segment register to R/M
 		case 0b10001100:
 			IP = wrapIncrement(IP)
@@ -87,12 +90,14 @@ func Simulate(logger *log.Logger) error {
 			segment, offset := calculateSegmentAndDisplacementByParameter(parameter, IP)
 			writeRMValue(parameter, segment, offset, sourceValue, Shared.WIDE)
 			IP = incrementIPByParameter(IP, parameter)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, true, true, true, 2, 0, 8)
 		//MOV R/M to segment register
 		case 0b10001110:
 			IP = wrapIncrement(IP)
 			parameter := readCodeB(IP)
-			sourceValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, Shared.WIDE)
+			sourceValue, _, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, Shared.WIDE)
 			IP = incrementIPByParameter(IP, parameter)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, false, true, true, 2, 9, 0)
 			switch parameter & Shared.RegMask {
 			case 0b000000:
 				ES = sourceValue
@@ -100,7 +105,8 @@ func Simulate(logger *log.Logger) error {
 				instruction := readInstruction(startOfInstruction, IP)
 				CS = sourceValue
 				IP = wrapIncrement(IP)
-				logStateAndInstruction(instruction, logger)
+				totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+				logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 				startOfInstruction = IP
 				continue
 			case 0b010000:
@@ -127,6 +133,7 @@ func Simulate(logger *log.Logger) error {
 				IP = wrapIncrement(IP)
 			}
 			writeRMValue(parameter, segment, offset, immediate, wide)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, true, wide != 0, true, 4, 0, 10)
 		//MOV immediate into register
 		case 0b10110000:
 			fallthrough
@@ -166,6 +173,7 @@ func Simulate(logger *log.Logger) error {
 				IP = wrapIncrement(IP)
 			}
 			writeRegister(register, sourceValue)
+			baseClockCycles, decodingCycles, penaltyCycles = 4, 0, 0
 
 		//ADD/OR/ADC/SUB/AND/SBB/CMP immediate to R/M
 		case 0b10000000:
@@ -189,6 +197,7 @@ func Simulate(logger *log.Logger) error {
 				immediate = signExtend(immediate)
 			}
 			var result = sourceValue
+			memoryCycles := 17
 			//var name = [8]string{"ADD ", "OR ", "ADC ", "SBB ", "AND ", "SUB ", "XOR ", "CMP "}[parameter&Shared.RegMask>>3]
 			switch parameter & Shared.RegMask {
 			case 0b000000:
@@ -197,10 +206,12 @@ func Simulate(logger *log.Logger) error {
 				result = subAndUpateFlags(sourceValue, immediate, wide != 0)
 			case 0b111000:
 				_ = subAndUpateFlags(sourceValue, immediate, wide != 0)
+				memoryCycles = 10
 			default:
 				return newUnsupportedError(CS, IP, "operation not implemented")
 			}
 			writeRMValue(parameter, segment, offset, result, wide)
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, true, wide != 0, false, 4, 0, memoryCycles)
 
 		//ADD register with R/M
 		case 0b00000000:
@@ -224,6 +235,7 @@ func Simulate(logger *log.Logger) error {
 			} else {
 				writeRegister(reg, sum)
 			}
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, sourceInReg, wide != 0, false, 3, 9, 16)
 		//ADD immediate to accumulator
 		case 0b00000100:
 			fallthrough
@@ -240,6 +252,7 @@ func Simulate(logger *log.Logger) error {
 			} else {
 				AX = writeL(AX, sum)
 			}
+			baseClockCycles, decodingCycles, penaltyCycles = 4, 0, 0
 
 		//SUB register and R/M
 		case 0b00101000:
@@ -262,6 +275,7 @@ func Simulate(logger *log.Logger) error {
 			} else {
 				writeRegister(reg, subAndUpateFlags(regValue, rmValue, wide != 0))
 			}
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, sourceInReg, wide != 0, false, 3, 9, 16)
 		//SUB immediate from accumulator
 		case 0b00101100:
 			fallthrough
@@ -278,6 +292,7 @@ func Simulate(logger *log.Logger) error {
 			} else {
 				AX = writeL(AX, difference)
 			}
+			baseClockCycles, decodingCycles, penaltyCycles = 4, 0, 0
 
 		//CMP register to R/M
 		case 0b00111000:
@@ -292,12 +307,13 @@ func Simulate(logger *log.Logger) error {
 			IP = wrapIncrement(IP)
 			parameter := readCodeB(IP)
 			regValue := readRegister(wide | (parameter & Shared.RegMask >> 3))
-			rmValue, _, _ := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
+			rmValue, _, offset := readRMValueSegmentAndDisplacementByParameter(parameter, IP, wide)
 			if sourceInReg {
 				_ = subAndUpateFlags(rmValue, regValue, wide != 0)
 			} else {
 				_ = subAndUpateFlags(regValue, rmValue, wide != 0)
 			}
+			baseClockCycles, decodingCycles, penaltyCycles = getBaseDecodingAndPenaltyCyclesByParameter(parameter, offset, sourceInReg, wide != 0, true, 3, 9, 9)
 		//CMP immediate with accumulator
 		case 0b00111100:
 			fallthrough
@@ -309,6 +325,7 @@ func Simulate(logger *log.Logger) error {
 				IP = wrapIncrement(IP)
 			}
 			_ = subAndUpateFlags(AX, sourceValue, wide)
+			baseClockCycles, decodingCycles, penaltyCycles = 4, 0, 0
 
 		//JMP
 		case 0b11101001:
@@ -317,7 +334,9 @@ func Simulate(logger *log.Logger) error {
 			IP = wrapAdd(IP, 2)
 			instruction := readInstruction(startOfInstruction, IP)
 			IP = calculateJump(offset, IP)
-			logStateAndInstruction(instruction, logger)
+			baseClockCycles, decodingCycles, penaltyCycles = 15, 0, 0
+			totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+			logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 			startOfInstruction = IP
 			continue
 		case 0b11101010:
@@ -329,7 +348,9 @@ func Simulate(logger *log.Logger) error {
 			instruction := readInstruction(startOfInstruction, IP)
 			CS = newCS
 			IP = newIP
-			logStateAndInstruction(instruction, logger)
+			baseClockCycles, decodingCycles, penaltyCycles = 15, 0, 0
+			totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+			logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 			startOfInstruction = IP
 			continue
 		//JMP byte
@@ -337,7 +358,9 @@ func Simulate(logger *log.Logger) error {
 			IP = wrapIncrement(IP)
 			instruction := readInstruction(startOfInstruction, IP)
 			IP = calculateJumpB(readCodeB(IP), IP)
-			logStateAndInstruction(instruction, logger)
+			baseClockCycles, decodingCycles, penaltyCycles = 15, 0, 0
+			totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+			logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 			startOfInstruction = IP
 			continue
 		//Conditional jumps
@@ -392,10 +415,13 @@ func Simulate(logger *log.Logger) error {
 			}
 			condition := conditions[currentInstructionByte&0b00001111]
 			IP = wrapIncrement(IP)
+			baseClockCycles, decodingCycles, penaltyCycles = 4, 0, 0
 			if condition != 0 {
 				instruction := readInstruction(startOfInstruction, IP)
 				IP = calculateJumpB(readCodeB(IP), IP)
-				logStateAndInstruction(instruction, logger)
+				baseClockCycles = 16
+				totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+				logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 				startOfInstruction = IP
 				continue
 			}
@@ -407,28 +433,36 @@ func Simulate(logger *log.Logger) error {
 		case 0b11100000:
 			condition := [3]byte{ZF ^ 1, ZF, 1}[currentInstructionByte&0b00000011]
 			IP = wrapIncrement(IP)
+			baseClockCycles, decodingCycles, penaltyCycles = [3]int{5, 6, 5}[currentInstructionByte&0b00000011], 0, 0
 			CX--
 			if CX > 0 && condition != 0 {
 				instruction := readInstruction(startOfInstruction, IP)
 				IP = calculateJumpB(readCodeB(IP), IP)
-				logStateAndInstruction(instruction, logger)
+				baseClockCycles = [3]int{19, 18, 17}[currentInstructionByte&0b00000011]
+				totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+				logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 				startOfInstruction = IP
 				continue
 			}
-		//JXCZ
+		//JCXZ
 		case 0b11100011:
 			IP = wrapIncrement(IP)
+			baseClockCycles, decodingCycles, penaltyCycles = 6, 0, 0
 			if CX == 0 {
 				instruction := readInstruction(startOfInstruction, IP)
 				IP = calculateJumpB(readCodeB(IP), IP)
-				logStateAndInstruction(instruction, logger)
+				baseClockCycles = 18
+				totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+				logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 				startOfInstruction = IP
 				continue
 			}
 
 		//HLT
 		case 0b11110100:
-			logStateAndInstruction(readInstruction(startOfInstruction, IP), logger)
+			baseClockCycles, decodingCycles, penaltyCycles = 2, 0, 0
+			totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+			logStateAndInstruction(readInstruction(startOfInstruction, IP), baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 			return nil
 
 		default:
@@ -437,7 +471,8 @@ func Simulate(logger *log.Logger) error {
 
 		instruction := readInstruction(startOfInstruction, IP)
 		IP = wrapIncrement(IP)
-		logStateAndInstruction(instruction, logger)
+		totalClockCycles += baseClockCycles + decodingCycles + penaltyCycles
+		logStateAndInstruction(instruction, baseClockCycles, decodingCycles, penaltyCycles, totalClockCycles, logger)
 		startOfInstruction = IP
 	}
 }
@@ -465,15 +500,6 @@ func Rest() {
 	AF = 0
 	PF = 0
 	CF = 0
-}
 
-func logStateAndInstruction(instruction []byte, logger *log.Logger) {
-	if logger != nil {
-		assembly, err := Disassembly.Disassemble(instruction)
-		if err != nil {
-			logger.Println(err.Error())
-		} else {
-			logger.Println(formatState() + " ; " + assembly)
-		}
-	}
+	clear(Memory[:])
 }

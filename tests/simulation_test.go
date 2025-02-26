@@ -5,12 +5,20 @@ import (
 	"log"
 	"math"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/P100sch/Intel8086Simulator/Simulation"
 )
+
+type stripClockWriter strings.Builder
+
+func (s *stripClockWriter) Write(p []byte) (n int, err error) {
+	position := strings.LastIndex(string(p), "bytes")
+	return (*strings.Builder)(s).Write(slices.Concat(p[:position+5], []byte{'\n'}[:]))
+}
 
 func TestSimulate(t *testing.T) {
 	listing, err := testFiles.ReadDir("data/simulation")
@@ -34,7 +42,11 @@ func TestSimulate(t *testing.T) {
 
 		builder := strings.Builder{}
 		logger := log.Logger{}
-		logger.SetOutput(&builder)
+		if isNotClocked(fileInfo.Name(), t) {
+			logger.SetOutput((*stripClockWriter)(&builder))
+		} else {
+			logger.SetOutput(&builder)
+		}
 		err = Simulation.LoadProgram(data, true)
 		if err != nil {
 			log.Fatal(err)
@@ -49,6 +61,7 @@ func TestSimulate(t *testing.T) {
 		expected := strings.ReplaceAll(string(expectedOutput), "\r", "")
 
 		if expected != output {
+			firstError := true
 			t.Error("output does not match for " + fileInfo.Name())
 			outputLines := strings.Split(output, "\n")
 			outputLen := len(outputLines)
@@ -61,9 +74,24 @@ func TestSimulate(t *testing.T) {
 				}
 			}
 			for i := len(expectedOutputLines); i < outputLen; i++ {
+				if firstError {
+					firstError = false
+				}
 				fmt.Printf("%"+strconv.FormatFloat(digits, 'f', 0, 64)+"d: %s\n\n", i, outputLines[i])
 			}
 		}
 		Simulation.Rest()
 	}
+}
+
+func isNotClocked(fileName string, t *testing.T) bool {
+	splitName := strings.Split(fileName, "_")
+	if len(splitName) < 2 {
+		t.Fatal("invalid file name \"" + fileName + "\"")
+	}
+	value, err := strconv.Atoi(splitName[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value < 56
 }
